@@ -3,186 +3,110 @@ name: Generate bindings for r2libr 🚀
 on:
   push:
     paths:
-      - 'r2libr/**'
-      - '!r2libr/libr/**'
+      - "r2libr/**"
+      - "!r2libr/libr/**"
     branches:
-      - "*"
+      - "master"
     tags:
       - "*"
   workflow_dispatch:
 
 jobs:
   generate:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
-    - name: Set up system path for python libs.
-      run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Set up system path for python libs.
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-    - name: Set up python and libclang.
-      run: sudo apt update && sudo apt install python3 python3-pip libclang-11-dev -y
-    
-    - name: Set up (a specific version) ctypeslib.
-      run: python3 -m pip install https://github.com/wtdcode/ctypeslib/archive/187171e5c2366d683e4b98943b919c9e379d2cd0.zip
-    
-    - name: Checkout the repo.
-      uses: actions/checkout@v2
-      with:
-        submodules: recursive
-        ref: master
-    
-    - name: Setup Ninja.
-      uses: seanmiddleditch/gha-setup-ninja@master
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
 
-    - name: Install meson.
-      run: python3 -m pip install setuptools wheel meson
+      - name: Set up libclang
+        run: sudo apt update && sudo apt install libclang-11-dev -y
 
-    - name: Build radare2.
-      run: cd r2libr && env BINDINGS=1 python3 setup.py build
-    
-    - name: Generate bindings.
-      run: cd r2libr/tools && python3 gen.py -O ../libr/ -B ../radare2/pyr2installdir/
+      - name: Set up (a specific version) ctypeslib.
+        run: python3 -m pip install https://github.com/wtdcode/ctypeslib/archive/187171e5c2366d683e4b98943b919c9e379d2cd0.zip
 
-    - name: Test bindings.
-      run: cd r2libr && python3 -m pip install -e . && cd tests && python3 test_r2libr.py
-    
-    - name: Set up git.
-      run: git config --global user.email mio@lazym.io && git config --global user.name mio
+      - name: Checkout the repo.
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+          ref: master
 
-    - name: Commit new bindings.
-      run: git status | grep -q "changes"  && git add -u && git commit -m "r2libr generated on `date`"
+      - name: Setup Ninja.
+        uses: seanmiddleditch/gha-setup-ninja@master
 
-    - name: Push new bindings
-      run: mkdir -p ~/.ssh && echo "$BINDINGS_DEPLOY_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && ssh-keyscan github.com >> ~/.ssh/known_hosts && git status && git remote add orig git@github.com:radareorg/radare2-bindings.git && git push orig
-      env:
-        BINDINGS_DEPLOY_KEY: ${{ secrets.BINDINGS_DEPLOY_KEY }}
-  
-  test:
+      - name: Install meson.
+        run: python3 -m pip install setuptools wheel meson
+
+      - name: Build radare2.
+        run: cd r2libr && env BINDINGS=1 python3 setup.py build
+
+      - name: Generate bindings.
+        run: cd r2libr/tools && python3 gen.py -O ../libr/ -B ../radare2/pyr2installdir/
+
+      - name: Build wheel
+        run: cd r2libr && python3 setup.py bdist_wheel
+
+      - name: Test bindings.
+        run: cd r2libr && python3 -m pip install -e . && cd tests && python3 test_r2libr.py
+
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: r2libr-python3.12-wheels
+          path: ${{ github.workspace }}/r2libr/dist/*.whl
+          if-no-files-found: error
+
+      # - name: Set up git.
+      # run: git config --global user.email mio@lazym.io && git config --global user.name mio
+
+      # - name: Commit new bindings.
+      # run: git status | grep -q "changes"  && git add -u && git commit -m "r2libr generated on `date`"
+
+      # - name: Push new bindings
+      #   run: mkdir -p ~/.ssh && echo "$BINDINGS_DEPLOY_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && ssh-keyscan github.com >> ~/.ssh/known_hosts && git status && git remote add orig git@github.com:radareorg/radare2-bindings.git && git push orig
+      #   env:
+      #     BINDINGS_DEPLOY_KEY: ${{ secrets.BINDINGS_DEPLOY_KEY }}
+
+  create_release:
     needs: [generate]
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-        platform: [x64]
-    steps:
-    - name: Set up system path for python libs.
-      run: echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-    - uses: actions/checkout@v2
-      with:
-        submodules: recursive
-
-    - name: Set up Python.
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.x'
-    
-    - name: Setup Ninja.
-      uses: seanmiddleditch/gha-setup-ninja@master
-
-    - name: Set up MSVC.
-      if: matrix.os == 'windows-latest'
-      uses: microsoft/setup-msbuild@v1
-
-    - name: Set up MSVC CMD x86_64.
-      if: matrix.os == 'windows-latest' && matrix.platform == 'x64'
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x64
-    
-    - name: Set up MSVC CMD x86.
-      if: matrix.os == 'windows-latest' && matrix.platform == 'x32'
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x86
-
-    - name: Install dependencies.
-      run: python3 -m pip install setuptools wheel meson
-
-    - name: Remove link.exe to avoid conflicts and Build distribution 📦 on Windows.
-      if: matrix.os == 'windows-latest'
-      shell: cmd
-      run: del /f "C:\Program Files\Git\mingw64\bin\link.exe"
-    
-    - name: Test our build.
-      run: cd r2libr && python3 -m pip install -e . && cd tests && python3 test_r2libr.py
-  
-  build:
-    needs: [test]
-    if: startsWith(github.ref, 'refs/tags')
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-        platform: [x64]
-    steps:
-    - name: Set up system path for python libs.
-      run: echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-    - uses: actions/checkout@v2
-      with:
-        submodules: recursive
-
-    - name: Set up Python.
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.x'
-    
-    - name: Setup Ninja.
-      uses: seanmiddleditch/gha-setup-ninja@master
-
-    - name: Set up MSVC.
-      if: matrix.os == 'windows-latest'
-      uses: microsoft/setup-msbuild@v1
-
-    - name: Set up MSVC CMD x86_64.
-      if: matrix.os == 'windows-latest' && matrix.platform == 'x64'
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x64
-    
-    - name: Set up MSVC CMD x86.
-      if: matrix.os == 'windows-latest' && matrix.platform == 'x32'
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x86
-
-    - name: Install dependencies.
-      run: |
-        python3 -m pip install setuptools wheel meson
-
-    - name: Remove link.exe to avoid conflicts and Build distribution 📦 on Windows.
-      if: matrix.os == 'windows-latest'
-      shell: cmd
-      run: |
-          del /f "C:\Program Files\Git\mingw64\bin\link.exe"
-          cd r2libr && python3 setup.py bdist_wheel
-      
-    - name: Build distribution 📦.
-      if: matrix.os != 'windows-latest'
-      shell: bash
-      run: cd r2libr && python3 setup.py bdist_wheel
-    
-    - name: Test our build.
-      run: cd r2libr && python3 -m pip install -e . && cd tests && python3 test_r2libr.py
-  
-    - uses: actions/upload-artifact@v2
-      with:
-         path: ${{ github.workspace }}/r2libr/dist/*
-
-  publish:
-    needs: [build]
-    if: startsWith(github.ref, 'refs/tags')
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
-      - uses: actions/download-artifact@v2
-        with:
-          name: artifact
-          path: dist
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      - name: Publish distribution 📦 to PyPI.
-        uses: pypa/gh-action-pypi-publish@master
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v3
         with:
-          user: __token__
-          password: ${{ secrets.pypi_pass }}
+          path: collected-wheels
+          name: r2libr-python3.12-wheels
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref }}
+          name: Release ${{ steps.get_version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          files: collected-wheels/*.whl
+          body: |
+            # r2libr Python 3.12 Wheels
+
+            This release contains wheel files for r2libr that can be installed with pip:
+
+            ```bash
+            pip install r2libr-[version]-[platform].whl
+            ```
+
+            Built with Python 3.12
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
